@@ -43,6 +43,25 @@ STATUS_MAP = {
 MESES = {1:"Jan",2:"Fev",3:"Mar",4:"Abr",5:"Mai",6:"Jun",
          7:"Jul",8:"Ago",9:"Set",10:"Out",11:"Nov",12:"Dez"}
 
+DIAS_MAP = {
+    0: "Segunda-feira",
+    1: "Terça-feira",
+    2: "Quarta-feira",
+    3: "Quinta-feira",
+    4: "Sexta-feira",
+    5: "Sábado",
+    6: "Domingo"
+}
+DIAS_ORDEM = [
+    "Segunda-feira",
+    "Terça-feira",
+    "Quarta-feira",
+    "Quinta-feira",
+    "Sexta-feira",
+    "Sábado",
+    "Domingo"
+]
+
 EXCEL_PATH = r"C:\Users\Matheus\.gemini\antigravity\brain\61c61a76-f4c1-4467-a187-845b4be89ff3\excel_extract2\Base Requestia 2024-2026.xlsx"
 PARQUET_PATH = "base_chamados.parquet"
 SHEET = "BASE CHAMADO"
@@ -305,6 +324,8 @@ def load_data(source):
     df["GOC"]          = df["GOC"].fillna("Sem GOC").str.strip().replace("#N/A","Sem GOC")
     df["ANALISTA"]     = df["ANALISTA"].fillna("N/A").str.strip()
     df["Cinema"]       = df["Cinema"].fillna("N/A").str.strip().str.upper()
+    df["Dia_Semana_Num"] = df["DATA_ABERTURA"].dt.dayofweek
+    df["Dia_Semana"]     = df["Dia_Semana_Num"].map(DIAS_MAP)
     return df
 
 # ─── GAUGE HALF-DONUT COM PONTEIRO/META (ESTILO FOTO) ─────────────────────────
@@ -657,7 +678,103 @@ def main():
         fig_cin.update_layout(**r2_cfg)
         st.plotly_chart(fig_cin, use_container_width=True, config={"displayModeBar": False})
 
-    # 6. SEÇÃO DEDICADA: ANÁLISE DETALHADA POR ANALISTA (PERFORMANCE INDIVIDUAL)
+    # 6. SEÇÃO DEDICADA: ANÁLISE DE VOLUMETRIA E SLA POR DIA DA SEMANA
+    st.markdown("""
+    <div style="margin-top: 14px; margin-bottom: 8px;">
+        <div style="font-size: 0.95rem; font-weight: 800; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px;">
+            📅 Análise de Chamados e Demanda por Dia da Semana
+        </div>
+        <div style="font-size: 0.75rem; color: #64748b;">
+            Identificação de dias com maior pico de chamados e conformidade operacional de Segunda a Domingo
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    df_dias = df.dropna(subset=["Dia_Semana_Num"]).groupby(["Dia_Semana_Num", "Dia_Semana"]).agg(
+        Total=("CHAMADO", "count"),
+        Ok=("Tempo", lambda x: ((x == "até 2h") | (x == "até 24h")).sum()),
+        Fora=("Tempo", lambda x: (x == "fora").sum())
+    ).reset_index().sort_values("Dia_Semana_Num")
+
+    if not df_dias.empty:
+        total_periodo = df_dias["Total"].sum()
+        df_dias["Pct_Vol"] = (df_dias["Total"] / total_periodo * 100).round(1)
+        df_dias["Taxa_SLA"] = (df_dias["Ok"] / df_dias["Total"] * 100).round(1)
+
+        dia_pico_idx = df_dias["Total"].idxmax()
+        dia_pico_nome = df_dias.loc[dia_pico_idx, "Dia_Semana"]
+        dia_pico_total = df_dias.loc[dia_pico_idx, "Total"]
+        dia_pico_pct = df_dias.loc[dia_pico_idx, "Pct_Vol"]
+
+        c_sem1, c_sem2 = st.columns([1.2, 1.2])
+
+        # ── Gráfico 1: Volumetria com Destaque no Dia de Pico ──
+        with c_sem1:
+            st.markdown(f"""
+            <div class="chart-box">
+                <div class="chart-box-title">Volumetria de Chamados por Dia da Semana</div>
+                <div class="chart-box-sub">Dia de Maior Pico: <b>{dia_pico_nome}</b> com <b>{fn(dia_pico_total)}</b> chamados ({dia_pico_pct:.1f}% da demanda)</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            bar_colors = ["#ba1c1c" if d == dia_pico_nome else "#2563eb" for d in df_dias["Dia_Semana"]]
+
+            fig_vol_dia = go.Figure()
+            fig_vol_dia.add_trace(go.Bar(
+                x=df_dias["Dia_Semana"],
+                y=df_dias["Total"],
+                marker=dict(color=bar_colors, line=dict(color="#ffffff", width=1.5)),
+                text=[f"{fn(t)}<br><span style='font-size:9.5px;color:#64748b'>({p:.1f}%)</span>" for t, p in zip(df_dias["Total"], df_dias["Pct_Vol"])],
+                textposition="outside",
+                textfont=dict(size=9.5, color=TEXT_MAIN, weight="bold"),
+                hovertemplate="<b>%{x}</b><br>Total de Chamados: %{y:,}<extra></extra>"
+            ))
+            
+            cfg_vd = get_box_layout(h=265, margin=dict(t=25, b=25, l=45, r=20))
+            cfg_vd["yaxis"]["range"] = [0, df_dias["Total"].max() * 1.22]
+            fig_vol_dia.update_layout(**cfg_vd)
+            st.plotly_chart(fig_vol_dia, use_container_width=True, config={"displayModeBar": False})
+
+        # ── Gráfico 2: Composição de Faixas de SLA por Dia da Semana ──
+        with c_sem2:
+            st.markdown("""
+            <div class="chart-box">
+                <div class="chart-box-title">Composição de Faixas de SLA por Dia da Semana</div>
+                <div class="chart-box-sub">Volume de atendimentos imediatos (≤2h), no prazo (≤24h) e fora do SLA por dia</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            cross_sla = df.dropna(subset=["Dia_Semana_Num"]).groupby(["Dia_Semana_Num", "Dia_Semana", "Tempo"]).size().unstack(fill_value=0).reset_index().sort_values("Dia_Semana_Num")
+            
+            fig_sla_comp = go.Figure()
+            ordem_exibicao = [
+                ("até 2h", "Até 2h (Imediato)", "#16a34a"),
+                ("até 24h", "Até 24h", "#2563eb"),
+                ("até 48h", "Até 48h", "#ea580c"),
+                ("fora", "Fora do SLA (>24h)", "#ba1c1c")
+            ]
+
+            for col_faixa, label_nome, cor in ordem_exibicao:
+                if col_faixa in cross_sla.columns:
+                    fig_sla_comp.add_trace(go.Bar(
+                        name=label_nome,
+                        x=cross_sla["Dia_Semana"],
+                        y=cross_sla[col_faixa],
+                        marker_color=cor
+                    ))
+
+            cfg_sc = get_box_layout(h=265, margin=dict(t=15, b=30, l=45, r=20))
+            cfg_sc["barmode"] = "stack"
+            cfg_sc["legend"] = dict(
+                orientation="h",
+                y=-0.22,
+                x=0.05,
+                font=dict(size=9.5, color=TEXT_MAIN)
+            )
+            fig_sla_comp.update_layout(**cfg_sc)
+            st.plotly_chart(fig_sla_comp, use_container_width=True, config={"displayModeBar": False})
+
+    # 7. SEÇÃO DEDICADA: ANÁLISE DETALHADA POR ANALISTA (PERFORMANCE INDIVIDUAL)
     st.markdown("""
     <div style="margin-top: 14px; margin-bottom: 8px;">
         <div style="font-size: 0.95rem; font-weight: 800; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px;">
