@@ -380,8 +380,49 @@ def get_box_layout(h=250, margin=None):
         ),
     )
 
+# ─── CONTROLE DE ACESSO / LOGIN DA EQUIPE ─────────────────────────────────────
+TEAM_PASSWORD = "cinemark2026"
+
+def check_password():
+    if st.session_state.get("authenticated", False):
+        return True
+
+    # Estilo do Card Centralizado de Login
+    st.markdown("""
+    <div style="max-width: 440px; margin: 40px auto 10px auto; background: #ffffff; border: 1px solid #cbd5e1; border-top: 5px solid #ba1c1c; border-radius: 8px; padding: 32px 30px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); text-align: center;">
+        <div style="color: #ba1c1c; font-size: 2.1rem; font-weight: 900; letter-spacing: 2px; text-transform: uppercase;">
+            CINEMARK<span style="font-size: 0.9rem; vertical-align: super;">™</span>
+        </div>
+        <div style="font-size: 1rem; font-weight: 700; color: #0f172a; margin-top: 10px;">
+            Painel de SLA & Metas Operacionais
+        </div>
+        <div style="font-size: 0.8rem; color: #64748b; margin-top: 4px;">
+            Acesso exclusivo à equipe e liderança
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 1.3, 1])
+    with col2:
+        with st.form("login_form"):
+            senha_digitada = st.text_input("Senha de Acesso", type="password", placeholder="Digite a senha...")
+            submit_btn = st.form_submit_button("Acessar Painel ➔", use_container_width=True)
+
+            if submit_btn:
+                if senha_digitada == TEAM_PASSWORD:
+                    st.session_state["authenticated"] = True
+                    st.rerun()
+                else:
+                    st.error("Senha incorreta. Solicite a senha correta ao responsável.")
+
+        st.caption("🔒 Ambiente seguro e restrito · Cinemark Brasil")
+
+    return False
+
 # ─── APLICAÇÃO PRINCIPAL ───────────────────────────────────────────────────────
 def main():
+    if not check_password():
+        return
     source = st.session_state.get("uploaded_file", EXCEL_PATH)
     try:
         df_raw = load_data(source)
